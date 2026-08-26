@@ -187,9 +187,7 @@ export async function GET() {
     }
 
     const rows = (await response.json()) as Array<Partial<ApiRecord>>;
-    const databaseRecords = rows
-      .map(normalizeApiRecord)
-      .filter((record) => record.review_status !== "Draft");
+    const databaseRecords = rows.map(normalizeApiRecord);
     return NextResponse.json(
       { apis: mergeWithFallback(databaseRecords), mode: "supabase" },
       { headers: { "Cache-Control": "no-store" } },
@@ -305,7 +303,7 @@ export async function POST(request: Request) {
       output_formats: ["JSON"],
       business_rules: [],
       client_types: ["REST"],
-      review_status: "Draft",
+      review_status: "Published",
       source_url: documentationUrl,
       verified_at: null,
     };
