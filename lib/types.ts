@@ -2,6 +2,7 @@ export const API_CATEGORIES = [
   "Communication",
   "Transformation",
   "Validation",
+  "Other",
 ] as const;
 
 export const AUTHENTICATION_TYPES = [
@@ -14,12 +15,12 @@ export const AUTHENTICATION_TYPES = [
   "HMAC/Signature",
   "None",
   "Composite",
+  "Other",
 ] as const;
 
 export const REVIEW_STATUSES = [
   "Published",
-  "Verified candidate",
-  "Draft",
+  "Verified",
 ] as const;
 
 export type ApiCategory = (typeof API_CATEGORIES)[number];
@@ -38,7 +39,9 @@ export interface ApiRecord {
   website_url: string;
   documentation_url: string;
   category: ApiCategory;
+  category_other: string;
   authentication_method: AuthenticationType;
+  authentication_other: string;
   authentication_details: string;
   network: string;
   is_active: boolean;
@@ -51,6 +54,8 @@ export interface ApiRecord {
   review_status: ReviewStatus;
   source_url: string;
   verified_at: string | null;
+  verified_by: string;
+  verification_notes: string;
 }
 
 export interface ApiSubmission {
@@ -62,7 +67,9 @@ export interface ApiSubmission {
   api_endpoint: string;
   documentation_url: string;
   category: ApiCategory;
+  category_other: string;
   authentication_method: AuthenticationType;
+  authentication_other: string;
   authentication_details: string;
   website_confirm?: string;
 }
@@ -99,6 +106,13 @@ export function normalizeAuthentication(value: unknown): AuthenticationType {
     : "Composite";
 }
 
+export function normalizeReviewStatus(value: unknown): ReviewStatus {
+  const normalized = asString(value).trim().toLowerCase();
+  return normalized === "verified" || normalized === "verified candidate"
+    ? "Verified"
+    : "Published";
+}
+
 export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
   const rawAuthentication = asString(input.authentication_method);
   const authentication = normalizeAuthentication(rawAuthentication);
@@ -107,9 +121,7 @@ export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
   const category = API_CATEGORIES.includes(input.category as ApiCategory)
     ? (input.category as ApiCategory)
     : "Communication";
-  const reviewStatus = REVIEW_STATUSES.includes(input.review_status as ReviewStatus)
-    ? (input.review_status as ReviewStatus)
-    : "Draft";
+  const reviewStatus = normalizeReviewStatus(input.review_status);
 
   return {
     id: asString(input.id) || crypto.randomUUID(),
@@ -123,7 +135,9 @@ export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
     website_url: asString(input.website_url),
     documentation_url: asString(input.documentation_url),
     category,
+    category_other: asString(input.category_other),
     authentication_method: authentication,
+    authentication_other: asString(input.authentication_other),
     authentication_details:
       suppliedDetails || (rawAuthentication && rawAuthentication !== authentication ? rawAuthentication : ""),
     network: asString(input.network),
@@ -137,5 +151,7 @@ export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
     review_status: reviewStatus,
     source_url: asString(input.source_url),
     verified_at: asString(input.verified_at) || null,
+    verified_by: asString(input.verified_by),
+    verification_notes: asString(input.verification_notes),
   };
 }
