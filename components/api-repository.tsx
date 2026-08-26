@@ -6,11 +6,17 @@ import {
   AUTHENTICATION_TYPES,
   type ApiRecord,
   type ApiSubmission,
+  type ReviewStatus,
 } from "@/lib/types";
 
 type RepositoryProps = { initialRecords: ApiRecord[] };
 type StorageMode = "dataset" | "supabase";
 type Notice = { message: string; kind: "success" | "error" } | null;
+type VerificationDraft = {
+  review_status: ReviewStatus;
+  verified_by: string;
+  verification_notes: string;
+};
 
 const emptyDraft: ApiSubmission = {
   api_name: "",
@@ -21,15 +27,24 @@ const emptyDraft: ApiSubmission = {
   api_endpoint: "",
   documentation_url: "",
   category: "Communication",
+  category_other: "",
   authentication_method: "OAuth2",
+  authentication_other: "",
   authentication_details: "",
   website_confirm: "",
+};
+
+const emptyVerification: VerificationDraft = {
+  review_status: "Published",
+  verified_by: "",
+  verification_notes: "",
 };
 
 const categoryTone: Record<string, string> = {
   Communication: "tone-teal",
   Transformation: "tone-blue",
   Validation: "tone-amber",
+  Other: "tone-purple",
 };
 
 function shortHost(value: string) {
@@ -48,12 +63,37 @@ function csvEscape(value: unknown) {
 
 function statusClass(value: string) {
   if (value === "Published") return "published";
-  if (value === "Verified candidate") return "candidate";
-  return "draft";
+  return "verified";
+}
+
+function statusMeaning(value: string) {
+  return value === "Verified"
+    ? "Verified: manually checked against an official source."
+    : "Published: visible in the catalog, but not manually verified.";
 }
 
 function showOriginal(english: string, original: string) {
   return Boolean(original && original.trim().toLocaleLowerCase() !== english.trim().toLocaleLowerCase());
+}
+
+function categoryLabel(record: ApiRecord) {
+  return record.category === "Other" && record.category_other
+    ? `Other · ${record.category_other}`
+    : record.category;
+}
+
+function authenticationLabel(record: ApiRecord) {
+  return record.authentication_method === "Other" && record.authentication_other
+    ? `Other · ${record.authentication_other}`
+    : record.authentication_method;
+}
+
+function formatVerifiedAt(value: string | null) {
+  if (!value) return "Date not recorded";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Date not recorded"
+    : new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 export default function ApiRepository({ initialRecords }: RepositoryProps) {
@@ -68,6 +108,10 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
   const [notice, setNotice] = useState<Notice>(null);
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationDraft, setVerificationDraft] = useState<VerificationDraft>(emptyVerification);
+  const [verificationError, setVerificationError] = useState("");
+  const [savingVerification, setSavingVerification] = useState(false);
   const [storageMode, setStorageMode] = useState<StorageMode>("dataset");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLElement>(null);
@@ -175,7 +219,9 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
           record.official_company_name,
           record.description,
           record.api_endpoint,
+          record.category_other,
           record.authentication_method,
+          record.authentication_other,
           record.authentication_details,
           ...record.input_formats,
           ...record.output_formats,
@@ -192,9 +238,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
 
   const selected = filtered.find((record) => record.id === selectedId) ?? filtered[0];
   const publishedCount = records.filter((record) => record.review_status === "Published").length;
-  const candidateCount = records.filter(
-    (record) => record.review_status === "Verified candidate",
-  ).length;
+  const verifiedCount = records.filter((record) => record.review_status === "Verified").length;
 
   function resetFilters() {
     setQuery("");
@@ -219,7 +263,9 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
       "api_endpoint",
       "documentation_url",
       "category",
+      "category_other",
       "authentication_method",
+      "authentication_other",
       "authentication_details",
       "network",
       "input_formats",
@@ -227,6 +273,9 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
       "business_rules",
       "client_types",
       "review_status",
+      "verified_by",
+      "verification_notes",
+      "verified_at",
       "source_url",
     ];
     const csv = [
@@ -295,6 +344,63 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
     }
   }
 
+  function openVerificationEditor() {
+    if (!selected) return;
+    setVerificationDraft({
+      review_status: selected.review_status,
+      verified_by: selected.verified_by,
+      verification_notes: selected.verification_notes,
+    });
+    setVerificationError("");
+    setVerificationOpen(true);
+  }
+
+  async function submitVerification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || savingVerification) return;
+    setSavingVerification(true);
+    setVerificationError("");
+
+    try {
+      const response = await fetch("/api/apis", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selected.id, ...verificationDraft }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        api?: ApiRecord;
+        error?: string;
+        requestId?: string;
+      };
+      if (!response.ok || !payload.api) {
+        const suffix = payload.requestId ? ` Reference: ${payload.requestId}` : "";
+        throw new Error(`${payload.error ?? "Verification could not be saved."}${suffix}`);
+      }
+
+      setRecords((current) =>
+        current.map((record) => (record.id === payload.api?.id ? payload.api as ApiRecord : record)),
+      );
+      if (status !== "All records" && status !== payload.api.review_status) {
+        setStatus("All records");
+      }
+      setSelectedId(payload.api.id);
+      setVerificationOpen(false);
+      setNotice({
+        message: payload.api.review_status === "Verified"
+          ? "Verification saved."
+          : "Verification removed; the API remains published.",
+        kind: "success",
+      });
+      window.setTimeout(() => setNotice(null), 4_200);
+    } catch (error) {
+      setVerificationError(
+        error instanceof Error ? error.message : "Verification could not be saved.",
+      );
+    } finally {
+      setSavingVerification(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -333,12 +439,16 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
               Search global e-invoicing integrations, compare formats and authentication,
               and contribute directly to the shared catalog.
             </p>
+            <p className="status-guide">
+              <strong>Published</strong> means publicly visible but not manually verified.
+              <strong>Verified</strong> means checked against an official source.
+            </p>
           </div>
           <div className="stat-grid" aria-label="Repository statistics">
             <article><strong>{records.length}</strong><span>Total APIs</span></article>
             <article><strong>{companies.length}</strong><span>Companies</span></article>
             <article><strong>{publishedCount}</strong><span>Published</span></article>
-            <article><strong>{candidateCount}</strong><span>Verified candidates</span></article>
+            <article><strong>{verifiedCount}</strong><span>Verified</span></article>
           </div>
         </div>
 
@@ -366,8 +476,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
             <select value={status} onChange={(event) => setStatus(event.target.value)}>
               <option>All records</option>
               <option>Published</option>
-              <option>Verified candidate</option>
-              <option>Draft</option>
+              <option>Verified</option>
             </select>
           </label>
           <label>
@@ -395,15 +504,22 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                   type="button"
                   key={record.id}
                   className={`api-card ${selected?.id === record.id ? "selected" : ""}`}
-                  onClick={() => setSelectedId(record.id)}
+                  onClick={() => {
+                    setSelectedId(record.id);
+                    setVerificationOpen(false);
+                    setVerificationError("");
+                  }}
                   aria-pressed={selected?.id === record.id}
                   aria-controls="api-detail"
                 >
                   <span className="api-card-topline">
                     <span className={`pill ${categoryTone[record.category] ?? "tone-gray"}`}>
-                      {record.category}
+                      {categoryLabel(record)}
                     </span>
-                    <span className={`status-label ${statusClass(record.review_status)}`}>
+                    <span
+                      className={`status-label ${statusClass(record.review_status)}`}
+                      title={statusMeaning(record.review_status)}
+                    >
                       {record.review_status}
                     </span>
                   </span>
@@ -414,7 +530,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                   <span className="company-name">{record.company_name}</span>
                   <span className="api-card-description">{record.description}</span>
                   <span className="api-card-meta">
-                    <span>{record.authentication_method || "Auth not listed"}</span>
+                    <span>{authenticationLabel(record) || "Auth not listed"}</span>
                     <span>{record.input_formats.slice(0, 2).join(" · ") || "Format not listed"}</span>
                   </span>
                 </button>
@@ -451,9 +567,12 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                 </div>
                 <div className="detail-badges">
                   <span className={`pill ${categoryTone[selected.category] ?? "tone-gray"}`}>
-                    {selected.category}
+                    {categoryLabel(selected)}
                   </span>
-                  <span className={`pill tone-gray status-${statusClass(selected.review_status)}`}>
+                  <span
+                    className={`pill tone-gray status-${statusClass(selected.review_status)}`}
+                    title={statusMeaning(selected.review_status)}
+                  >
                     {selected.review_status}
                   </span>
                   {selected.network && <span className="pill tone-purple">{selected.network}</span>}
@@ -473,7 +592,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                 <dl className="detail-grid">
                   <div>
                     <dt>Authentication</dt>
-                    <dd>{selected.authentication_method || "Not listed"}</dd>
+                    <dd>{authenticationLabel(selected) || "Not listed"}</dd>
                   </div>
                   <div>
                     <dt>Documentation host</dt>
@@ -488,6 +607,106 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                     <dd>{selected.output_formats.join(", ") || "Not listed"}</dd>
                   </div>
                 </dl>
+
+                <section className={`verification-panel ${selected.review_status === "Verified" ? "verified" : ""}`}>
+                  <div className="verification-heading">
+                    <div>
+                      <span>Verification status</span>
+                      <strong>{selected.review_status}</strong>
+                    </div>
+                    <button className="button secondary" type="button" onClick={openVerificationEditor}>
+                      Update status
+                    </button>
+                  </div>
+                  {selected.review_status === "Verified" ? (
+                    <div className="verification-record">
+                      <p>
+                        Verified by <strong>{selected.verified_by || "Internal user"}</strong>
+                        <span>{formatVerifiedAt(selected.verified_at)}</span>
+                      </p>
+                      <p>{selected.verification_notes || "Official source checked; no note supplied."}</p>
+                    </div>
+                  ) : (
+                    <p className="verification-copy">
+                      This API is public but has not been manually checked. A documentation link alone
+                      does not count as verification.
+                    </p>
+                  )}
+
+                  {verificationOpen && (
+                    <form className="verification-form" onSubmit={submitVerification}>
+                      <label>
+                        <span>Status</span>
+                        <select
+                          value={verificationDraft.review_status}
+                          onChange={(event) => setVerificationDraft({
+                            ...verificationDraft,
+                            review_status: event.target.value as ReviewStatus,
+                            verified_by: event.target.value === "Verified"
+                              ? verificationDraft.verified_by
+                              : "",
+                            verification_notes: event.target.value === "Verified"
+                              ? verificationDraft.verification_notes
+                              : "",
+                          })}
+                        >
+                          <option>Published</option>
+                          <option>Verified</option>
+                        </select>
+                      </label>
+                      {verificationDraft.review_status === "Verified" && (
+                        <>
+                          <label>
+                            <span>Verified by *</span>
+                            <input
+                              required
+                              maxLength={120}
+                              placeholder="Name or team"
+                              value={verificationDraft.verified_by}
+                              onChange={(event) => setVerificationDraft({
+                                ...verificationDraft,
+                                verified_by: event.target.value,
+                              })}
+                            />
+                          </label>
+                          <label className="full">
+                            <span>Verification note *</span>
+                            <textarea
+                              required
+                              rows={3}
+                              maxLength={1_000}
+                              placeholder="What official source was checked, and what matched?"
+                              value={verificationDraft.verification_notes}
+                              onChange={(event) => setVerificationDraft({
+                                ...verificationDraft,
+                                verification_notes: event.target.value,
+                              })}
+                            />
+                          </label>
+                        </>
+                      )}
+                      {verificationError && (
+                        <p className="form-error full" role="alert">{verificationError}</p>
+                      )}
+                      <div className="verification-actions full">
+                        <button
+                          className="button secondary"
+                          type="button"
+                          disabled={savingVerification}
+                          onClick={() => {
+                            setVerificationOpen(false);
+                            setVerificationError("");
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button className="button primary" type="submit" disabled={savingVerification}>
+                          {savingVerification ? "Saving…" : "Save status"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </section>
 
                 {selected.authentication_details && (
                   <section className="detail-section">
@@ -648,6 +867,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                   onChange={(event) => setDraft({
                     ...draft,
                     category: event.target.value as ApiSubmission["category"],
+                    category_other: event.target.value === "Other" ? draft.category_other : "",
                   })}
                 >
                   {API_CATEGORIES.map((item) => <option key={item}>{item}</option>)}
@@ -660,11 +880,38 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
                   onChange={(event) => setDraft({
                     ...draft,
                     authentication_method: event.target.value as ApiSubmission["authentication_method"],
+                    authentication_other: event.target.value === "Other"
+                      ? draft.authentication_other
+                      : "",
                   })}
                 >
                   {AUTHENTICATION_TYPES.map((item) => <option key={item}>{item}</option>)}
                 </select>
               </label>
+              {draft.category === "Other" && (
+                <label>
+                  <span>Other category *</span>
+                  <input
+                    required
+                    maxLength={100}
+                    placeholder="Enter the category"
+                    value={draft.category_other}
+                    onChange={(event) => setDraft({ ...draft, category_other: event.target.value })}
+                  />
+                </label>
+              )}
+              {draft.authentication_method === "Other" && (
+                <label>
+                  <span>Other authentication *</span>
+                  <input
+                    required
+                    maxLength={120}
+                    placeholder="Enter the authentication type"
+                    value={draft.authentication_other}
+                    onChange={(event) => setDraft({ ...draft, authentication_other: event.target.value })}
+                  />
+                </label>
+              )}
               <label className="full">
                 <span>Authentication details</span>
                 <textarea
