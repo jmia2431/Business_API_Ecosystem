@@ -577,7 +577,7 @@ textarea:focus {
 .api-card-meta span + span::before {
   margin-right: 9px;
   color: var(--border-strong);
-  content: "•";
+  content: "鈥?;
 }
 
 .pill,
