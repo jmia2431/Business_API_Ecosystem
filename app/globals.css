@@ -238,6 +238,16 @@ a {
   padding: 42px 0 64px;
 }
 
+.repository-alert {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #eddca7;
+  border-radius: var(--r-sm);
+  background: var(--amber-50);
+  color: var(--amber-800);
+  font-size: 11px;
+}
+
 .intro-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
