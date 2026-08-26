@@ -43,18 +43,34 @@ type ImportResult = {
 };
 
 const IMPORT_HEADERS = [
-  "API name",
-  "Official API name",
-  "Company",
-  "Official company name",
-  "Description",
-  "API endpoint",
-  "Official documentation",
-  "Category",
-  "Authentication",
-  "Authentication details",
+  "api_name",
+  "description",
+  "api_endpoint",
+  "instructions",
+  "company_name",
+  "website_url",
+  "documentation_url",
+  "category",
+  "authentication_method",
+  "network",
+  "is_active",
+  "created_at",
+  "updated_at",
+  "input_formats",
+  "output_formats",
+  "business_rules",
+  "client_types",
 ] as const;
-type ImportHeader = (typeof IMPORT_HEADERS)[number];
+
+const REQUIRED_IMPORT_HEADERS = [
+  "api_name",
+  "description",
+  "api_endpoint",
+  "company_name",
+  "documentation_url",
+  "category",
+  "authentication_method",
+] as const;
 
 const emptyDraft: ApiSubmission = {
   api_name: "",
@@ -239,20 +255,20 @@ function createImportRows(rawRows: Array<Record<ImportHeader, string> & { source
   const fileKeys = new Set<string>();
   return rawRows.map<ImportPreviewRow>((row) => {
     const category = canonicalCategory(row.Category);
-    const authentication = canonicalAuthentication(row.Authentication);
+    const authentication = canonicalAuthentication(row.authentication_method);
     const submission: ImportSubmission = {
-      api_name: row["API name"],
-      official_api_name: row["Official API name"],
-      company_name: row.Company,
-      official_company_name: row["Official company name"],
-      description: row.Description,
-      api_endpoint: row["API endpoint"],
-      documentation_url: row["Official documentation"],
+      api_name: row.api_name,
+      official_api_name: "",
+      company_name: row.company_name,
+      official_company_name: "",
+      description: row.description,
+      api_endpoint: row.api_endpoint,
+      documentation_url: row.documentation_url,
       category: category.value,
       category_other: category.other,
       authentication_method: authentication.value,
       authentication_other: authentication.other,
-      authentication_details: row["Authentication details"],
+      authentication_details: "",
       website_confirm: "",
       source_row: row.sourceRow,
     };
@@ -625,16 +641,16 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
         const header = normalizedHeader(importCellText(cell));
         if (header && !headerColumns.has(header)) headerColumns.set(header, columnIndex);
       });
-      const missing = IMPORT_HEADERS.filter((header) => !headerColumns.has(normalizedHeader(header)));
+      const missing = REQUIRED_IMPORT_HEADERS.filter((header) => !headerColumns.has(normalizedHeader(header)));
       if (missing.length > 0) throw new Error(`Missing required header${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.`);
       const rawRows: Array<Record<ImportHeader, string> & { sourceRow: number }> = [];
       for (let rowIndex = 1; rowIndex < sheetRows.length; rowIndex += 1) {
         const row = sheetRows[rowIndex];
         const rowNumber = rowIndex + 1;
         const values = Object.fromEntries(IMPORT_HEADERS.map((header) => {
-          const column = headerColumns.get(normalizedHeader(header)) as number;
-          return [header, importCellText(row[column])];
-        })) as Record<ImportHeader, string>;
+          const column = headerColumns.get(normalizedHeader(header));
+          return [header,column === undefined ? "" : importCellText(row[column]),];})
+                                         ) as Record<ImportHeader, string>;
         if (!IMPORT_HEADERS.some((header) => values[header])) continue;
         rawRows.push({ ...values, sourceRow: rowNumber });
         if (rawRows.length > 500) {
@@ -907,7 +923,8 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
           <div className="modal-heading"><div><p className="eyebrow">Bulk contribution</p><h2 id="import-api-title">Import APIs from Excel</h2></div><button type="button" aria-label="Close Excel importer" onClick={closeModal}>×</button></div>
           <p className="modal-copy" id="import-api-description">Upload one .xlsx workbook (maximum 5 MB and 500 API rows). The first worksheet is used. Nothing is saved until you review the row-by-row preview and confirm the final set.</p>
           <section className="header-requirements" aria-labelledby="required-headers-title">
-            <div><h3 id="required-headers-title">Required headers</h3><p>Include all 10 labels. Order can vary; capitalization and surrounding spaces are ignored. Values may be blank only for the two Official name columns and Authentication details.</p></div>
+           <div>
+             <h3 id="required-headers-title">Excel headers</h3><p>Required: api_name, description, api_endpoint, company_name, documentation_url, category, authentication_method. All other supported columns are optional. </p></div>
             <button className="button secondary" type="button" onClick={downloadImportTemplate}>Download template</button>
             <div className="import-header-list">{IMPORT_HEADERS.map((header) => <code key={header}>{header}</code>)}</div>
           </section>
