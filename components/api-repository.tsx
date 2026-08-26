@@ -35,11 +35,10 @@ type ServerRowReport = {
   error?: string;
 };
 type ImportResult = {
-  workbookRows: number;
+  submitted: number;
   uploaded: number;
   duplicates: number;
   invalid: number;
-  serverReports: ServerRowReport[];
   warning?: string;
 };
 
