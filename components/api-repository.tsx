@@ -256,7 +256,7 @@ function createImportRows(rawRows: Array<Record<ImportHeader, string> & { source
   const catalogKeys = new Set(records.map((record) => duplicateKey(record.company_name, record.api_name)));
   const fileKeys = new Set<string>();
   return rawRows.map<ImportPreviewRow>((row) => {
-    const category = canonicalCategory(row.Category);
+    const category = canonicalCategory(row.category);
     const authentication = canonicalAuthentication(row.authentication_method);
     const submission: ImportSubmission = {
       api_name: row.api_name,
