@@ -74,6 +74,12 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
   const firstModalInputRef = useRef<HTMLInputElement>(null);
   const openFormButtonRef = useRef<HTMLButtonElement>(null);
 
+  function closeForm() {
+    setDraft(emptyDraft);
+    setFormError("");
+    setShowForm(false);
+  }
+
   useEffect(() => {
     let active = true;
     fetch("/api/apis", { cache: "no-store" })
@@ -121,7 +127,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
     function handleModalKeys(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        setShowForm(false);
+        closeForm();
         return;
       }
       if (event.key !== "Tab" || !modalRef.current) return;
@@ -198,6 +204,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
   }
 
   function openForm() {
+    setDraft(emptyDraft);
     setFormError("");
     setShowForm(true);
   }
@@ -277,7 +284,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
       setShowForm(false);
       setStorageMode("supabase");
       setNotice({
-        message: "API saved privately for review. It will appear publicly after approval.",
+        message: "API published successfully.",
         kind: "success",
       });
       window.setTimeout(() => setNotice(null), 4_200);
@@ -324,7 +331,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
             <h1>Find the right business API, fast.</h1>
             <p className="intro-copy">
               Search global e-invoicing integrations, compare formats and authentication,
-              and contribute candidates to a shared review queue.
+              and contribute directly to the shared catalog.
             </p>
           </div>
           <div className="stat-grid" aria-label="Repository statistics">
@@ -537,7 +544,7 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowForm(false);
+            if (event.target === event.currentTarget) closeForm();
           }}
         >
           <section
@@ -551,18 +558,18 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
             <div className="modal-heading">
               <div>
                 <p className="eyebrow">New record</p>
-                <h2 id="add-api-title">Add an API candidate</h2>
+                <h2 id="add-api-title">Add an API</h2>
               </div>
               <button
                 type="button"
                 aria-label="Close add API form"
-                onClick={() => setShowForm(false)}
+                onClick={closeForm}
               >
                 ×
               </button>
             </div>
             <p className="modal-copy" id="add-api-description">
-              Add the core fields now. The record enters the review queue before publication.
+              Add the core fields now. Valid submissions are published immediately.
             </p>
             <form onSubmit={submitApi} className="api-form">
               <label>
@@ -681,20 +688,20 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
               <div className="form-footer full">
                 <span>
                   {storageMode === "supabase"
-                    ? "This record will be saved permanently as Draft and published after owner review."
+                    ? "This record will be saved permanently and published immediately."
                     : "Connect the Supabase server variables before accepting submissions."}
                 </span>
                 <div>
                   <button
                     className="button secondary"
                     type="button"
-                    onClick={() => setShowForm(false)}
+                    onClick={closeForm}
                     disabled={submitting}
                   >
                     Cancel
                   </button>
                   <button className="button primary" type="submit" disabled={submitting}>
-                    {submitting ? "Saving…" : "Add to review queue"}
+                    {submitting ? "Publishing…" : "Publish API"}
                   </button>
                 </div>
               </div>
