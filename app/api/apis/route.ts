@@ -7,6 +7,7 @@ import {
   type ApiCategory,
   type ApiRecord,
   type AuthenticationType,
+  type ReviewStatus,
 } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,9 @@ const SELECT_FIELDS = [
   "website_url",
   "documentation_url",
   "category",
+  "category_other",
   "authentication_method",
+  "authentication_other",
   "authentication_details",
   "network",
   "is_active",
@@ -36,6 +39,8 @@ const SELECT_FIELDS = [
   "review_status",
   "source_url",
   "verified_at",
+  "verified_by",
+  "verification_notes",
 ].join(",");
 
 const fallbackRecords = (seedData as Array<Partial<ApiRecord>>).map(normalizeApiRecord);
@@ -122,6 +127,17 @@ function getClientKey(request: Request) {
   return forwarded || request.headers.get("x-real-ip") || "unknown";
 }
 
+function isSameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 function isRateLimited(clientKey: string) {
   const now = Date.now();
   const recent = (rateLimitStore.get(clientKey) ?? []).filter(
@@ -155,6 +171,37 @@ function mergeWithFallback(databaseRecords: ApiRecord[]) {
     if (!merged.has(recordKey(record))) merged.set(recordKey(record), record);
   }
   return [...merged.values()];
+}
+
+function databaseRecord(record: ApiRecord) {
+  return {
+    id: record.id,
+    api_name: record.api_name,
+    official_api_name: record.official_api_name,
+    description: record.description,
+    api_endpoint: record.api_endpoint,
+    instructions: record.instructions,
+    company_name: record.company_name,
+    official_company_name: record.official_company_name,
+    website_url: record.website_url,
+    documentation_url: record.documentation_url,
+    category: record.category,
+    category_other: record.category_other,
+    authentication_method: record.authentication_method,
+    authentication_other: record.authentication_other,
+    authentication_details: record.authentication_details,
+    network: record.network,
+    is_active: record.is_active,
+    input_formats: record.input_formats,
+    output_formats: record.output_formats,
+    business_rules: record.business_rules,
+    client_types: record.client_types,
+    review_status: "Published",
+    source_url: record.source_url,
+    verified_at: null,
+    verified_by: "",
+    verification_notes: "",
+  };
 }
 
 export async function GET() {
@@ -238,7 +285,9 @@ export async function POST(request: Request) {
     const apiEndpoint = sanitizeString(input, "api_endpoint", 2_000, true);
     const documentationUrl = sanitizeString(input, "documentation_url", 2_000, true);
     const category = sanitizeString(input, "category", 40, true);
+    const categoryOtherInput = sanitizeString(input, "category_other", 100);
     const authentication = sanitizeString(input, "authentication_method", 60, true);
+    const authenticationOtherInput = sanitizeString(input, "authentication_other", 120);
     const authenticationDetails = sanitizeString(input, "authentication_details", 1_000);
 
     requireHttpUrl(apiEndpoint, "API endpoint");
@@ -249,6 +298,14 @@ export async function POST(request: Request) {
     if (!AUTHENTICATION_TYPES.includes(authentication as AuthenticationType)) {
       throw new ValidationError("Authentication type is not supported.");
     }
+    if (category === "Other" && !categoryOtherInput) {
+      throw new ValidationError("Please enter the other category.");
+    }
+    if (authentication === "Other" && !authenticationOtherInput) {
+      throw new ValidationError("Please enter the other authentication type.");
+    }
+    const categoryOther = category === "Other" ? categoryOtherInput : "";
+    const authenticationOther = authentication === "Other" ? authenticationOtherInput : "";
     if (fallbackRecordKeys.has(recordKey({ company_name: companyName, api_name: apiName }))) {
       return publicError("This company and API name are already in the repository.", 409, requestId);
     }
@@ -293,7 +350,9 @@ export async function POST(request: Request) {
       api_endpoint: apiEndpoint,
       documentation_url: documentationUrl,
       category,
+      category_other: categoryOther,
       authentication_method: authentication,
+      authentication_other: authenticationOther,
       authentication_details: authenticationDetails,
       instructions: "",
       website_url: "",
@@ -306,6 +365,8 @@ export async function POST(request: Request) {
       review_status: "Published",
       source_url: documentationUrl,
       verified_at: null,
+      verified_by: "",
+      verification_notes: "",
     };
 
     const insertResponse = await fetch(`${config.url}/rest/v1/apis?select=${SELECT_FIELDS}`, {
@@ -341,5 +402,166 @@ export async function POST(request: Request) {
       requestId,
     });
     return publicError("The API could not be saved. Please try again.", 500, requestId);
+  }
+}
+
+export async function PATCH(request: Request) {
+  const requestId = crypto.randomUUID();
+  if (!isSameOrigin(request)) {
+    return publicError("Verification updates must come from this website.", 403, requestId);
+  }
+
+const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > 8_000) return publicError("Request body is too large.", 413, requestId);
+  if (isRateLimited(`verification:${getClientKey(request)}`)) {
+    return publicError("Too many verification updates. Please try again later.", 429, requestId);
+  }
+
+  let input: Record<string, unknown>;
+  try {
+    const body = await request.text();
+    if (body.length > 8_000) return publicError("Request body is too large.", 413, requestId);
+    input = JSON.parse(body) as Record<string, unknown>;
+    if (!input || Array.isArray(input) || typeof input !== "object") {
+      throw new ValidationError("A JSON object is required.");
+    }
+  } catch (error) {
+    const message = error instanceof ValidationError ? error.message : "Invalid JSON request body.";
+    return publicError(message, 400, requestId);
+  }
+
+try {
+    const id = sanitizeString(input, "id", 36, true);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      throw new ValidationError("API id is invalid.");
+    }
+    const reviewStatus = sanitizeString(input, "review_status", 20, true);
+    if (reviewStatus !== "Published" && reviewStatus !== "Verified") {
+      throw new ValidationError("Verification status is not supported.");
+    }
+
+    const verifiedByInput = sanitizeString(input, "verified_by", 120);
+    const verificationNotesInput = sanitizeString(input, "verification_notes", 1_000);
+    if (reviewStatus === "Verified" && (!verifiedByInput || !verificationNotesInput)) {
+      throw new ValidationError("Verified by and verification note are required.");
+    }
+    const verifiedBy = reviewStatus === "Verified" ? verifiedByInput : "";
+    const verificationNotes = reviewStatus === "Verified" ? verificationNotesInput : "";
+
+    const config = getSupabaseConfig();
+    if (!config) {
+      return publicError(
+        "Verification is not connected yet. Add the Supabase server variables in Vercel.",
+        503,
+        requestId,
+      );
+    }
+    const connectedConfig = config;
+
+    async function lookup(query: URLSearchParams) {
+      const response = await fetch(`${connectedConfig.url}/rest/v1/apis?${query}`, {
+        headers: supabaseHeaders(connectedConfig),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        console.error("Supabase verification lookup failed", { status: response.status, requestId });
+        throw new Error("lookup failed");
+      }
+      return (await response.json()) as Array<Partial<ApiRecord>>;
+    }
+
+    const idQuery = new URLSearchParams({ select: SELECT_FIELDS, id: `eq.${id}`, limit: "1" });
+    let target = (await lookup(idQuery))[0];
+
+    if (!target) {
+      const seed = fallbackRecords.find((record) => record.id === id);
+      if (!seed) return publicError("API record was not found.", 404, requestId);
+
+      const keyQuery = new URLSearchParams({
+        select: SELECT_FIELDS,
+        company_name: `eq.${seed.company_name}`,
+        api_name: `eq.${seed.api_name}`,
+        limit: "1",
+      });
+      target = (await lookup(keyQuery))[0];
+
+  if (!target) {
+        const insertResponse = await fetch(`${config.url}/rest/v1/apis?select=${SELECT_FIELDS}`, {
+          method: "POST",
+          headers: {
+            ...supabaseHeaders(config, true),
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify(databaseRecord(seed)),
+          cache: "no-store",
+        });
+
+        if (insertResponse.status === 409) {
+          target = (await lookup(keyQuery))[0];
+        } else if (!insertResponse.ok) {
+          console.error("Supabase seed promotion failed", {
+            status: insertResponse.status,
+            requestId,
+          });
+          return publicError("Verification could not be saved. Please try again.", 502, requestId);
+        } else {
+          target = ((await insertResponse.json()) as Array<Partial<ApiRecord>>)[0];
+        }
+      }
+    }
+
+  if (!target?.id) {
+      return publicError("API record was not found.", 404, requestId);
+    }
+
+    const updateQuery = new URLSearchParams({
+      id: `eq.${target.id}`,
+      select: SELECT_FIELDS,
+    });
+    const updateRecord = reviewStatus === "Verified"
+      ? {
+          review_status: reviewStatus as ReviewStatus,
+          verified_by: verifiedBy,
+          verification_notes: verificationNotes,
+          verified_at: new Date().toISOString(),
+        }
+      : {
+          review_status: reviewStatus as ReviewStatus,
+          verified_by: "",
+          verification_notes: "",
+          verified_at: null,
+        };
+
+  const updateResponse = await fetch(`${config.url}/rest/v1/apis?${updateQuery}`, {
+      method: "PATCH",
+      headers: {
+        ...supabaseHeaders(config, true),
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify(updateRecord),
+      cache: "no-store",
+    });
+    if (!updateResponse.ok) {
+      console.error("Supabase verification update failed", {
+        status: updateResponse.status,
+        requestId,
+      });
+      return publicError("Verification could not be saved. Please try again.", 502, requestId);
+    }
+
+  const saved = ((await updateResponse.json()) as Array<Partial<ApiRecord>>)[0];
+    if (!saved) return publicError("Verification was saved but could not be returned.", 502, requestId);
+
+    return NextResponse.json(
+      { api: normalizeApiRecord(saved) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (error) {
+    if (error instanceof ValidationError) return publicError(error.message, 400, requestId);
+    console.error("Unexpected verification update error", {
+      message: error instanceof Error ? error.message : "Unknown error",
+      requestId,
+    });
+    return publicError("Verification could not be saved. Please try again.", 500, requestId);
   }
 }
