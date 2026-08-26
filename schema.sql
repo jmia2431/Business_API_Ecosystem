@@ -25,7 +25,7 @@ create table if not exists public.apis (
   output_formats text[] not null default '{}',
   business_rules text[] not null default '{}',
   client_types text[] not null default '{}',
-  review_status text not null default 'Draft',
+  review_status text not null default 'Published',
   source_url text not null default '',
   verified_at timestamptz
 );
@@ -35,6 +35,9 @@ alter table public.apis
   add column if not exists official_api_name text not null default '',
   add column if not exists official_company_name text not null default '',
   add column if not exists authentication_details text not null default '';
+
+alter table public.apis
+  alter column review_status set default 'Published';
 
 create unique index if not exists apis_company_api_unique
   on public.apis (lower(company_name), lower(api_name));
@@ -62,14 +65,12 @@ for each row execute function public.set_updated_at();
 alter table public.apis enable row level security;
 
 drop policy if exists "Reviewed active APIs are readable" on public.apis;
-create policy "Reviewed active APIs are readable"
+drop policy if exists "Active APIs are readable" on public.apis;
+create policy "Active APIs are readable"
 on public.apis
 for select
 to anon, authenticated
-using (
-  is_active = true
-  and review_status in ('Published', 'Verified candidate')
-);
+using (is_active = true);
 
 -- Public visitors submit through /api/apis, where fields are validated and
 -- the server-only Supabase secret performs the insert. Browsers cannot write
