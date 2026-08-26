@@ -569,13 +569,19 @@ textarea:focus {
 }
 
 .api-card-meta {
-  justify-content: flex-start;
+  display: flex;
+  align-items: center;
   color: var(--muted-2);
   font-size: 10px;
 }
 
+.api-card-meta span + span {
+  display: flex;
+  align-items: center;
+}
+
 .api-card-meta span + span::before {
-  margin-right: 9px;
+  margin: 0 9px;
   color: var(--border-strong);
   content: "•";
 }
