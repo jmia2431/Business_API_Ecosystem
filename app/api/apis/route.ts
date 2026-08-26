@@ -206,63 +206,194 @@ async function readJsonObject(request: Request, maximumBytes: number) {
   return value as Record<string, unknown>;
 }
 
+function optionalBoolean(
+  input: Record<string, unknown>,
+  field: string,
+  defaultValue: boolean,
+) {
+  const value = input[field];
+
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    if (["true", "yes", "1"].includes(normalized)) return true;
+    if (["false", "no", "0"].includes(normalized)) return false;
+  }
+
+  throw new ValidationError(`${field} must be true or false.`);
+}
+
+function optionalStringArray(
+  input: Record<string, unknown>,
+  field: string,
+  defaultValue: string[] = [],
+) {
+  const value = input[field];
+
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/[,;|\n]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  throw new ValidationError(`${field} must be a list or text.`);
+}
+
 function submissionDatabaseRecord(input: Record<string, unknown>) {
   const apiName = sanitizeString(input, "api_name", 180, true);
-  const officialApiName = sanitizeString(input, "official_api_name", 240);
   const companyName = sanitizeString(input, "company_name", 180, true);
-  const officialCompanyName = sanitizeString(input, "official_company_name", 240);
+
   const description = sanitizeString(input, "description", 2_000, true);
   const apiEndpoint = sanitizeString(input, "api_endpoint", 2_000, true);
-  const documentationUrl = sanitizeString(input, "documentation_url", 2_000, true);
+  const documentationUrl = sanitizeString(
+    input,
+    "documentation_url",
+    2_000,
+    true,
+  );
+
   const category = sanitizeString(input, "category", 40, true);
-  const categoryOtherInput = sanitizeString(input, "category_other", 100);
-  const authentication = sanitizeString(input, "authentication_method", 60, true);
-  const authenticationOtherInput = sanitizeString(input, "authentication_other", 120);
-  const authenticationDetails = sanitizeString(input, "authentication_details", 1_000);
+  const authentication = sanitizeString(
+    input,
+    "authentication_method",
+    60,
+    true,
+  );
+
+  const instructions = sanitizeString(input, "instructions", 4_000);
+  const websiteUrl = sanitizeString(input, "website_url", 2_000);
+  const network = sanitizeString(input, "network", 200);
+
+  const categoryOtherInput = sanitizeString(
+    input,
+    "category_other",
+    100,
+  );
+
+  const authenticationOtherInput = sanitizeString(
+    input,
+    "authentication_other",
+    120,
+  );
+
+  const authenticationDetails = sanitizeString(
+    input,
+    "authentication_details",
+    1_000,
+  );
 
   requireHttpEndpoint(apiEndpoint);
   requireHttpUrl(documentationUrl, "Official documentation");
+
+  if (websiteUrl) {
+    requireHttpUrl(websiteUrl, "Website URL");
+  }
+
   if (!API_CATEGORIES.includes(category as ApiCategory)) {
     throw new ValidationError("Category is not supported.");
   }
+
   if (!AUTHENTICATION_TYPES.includes(authentication as AuthenticationType)) {
     throw new ValidationError("Authentication type is not supported.");
   }
+
   if (category === "Other" && !categoryOtherInput) {
     throw new ValidationError("Please enter the other category.");
   }
+
   if (authentication === "Other" && !authenticationOtherInput) {
-    throw new ValidationError("Please enter the other authentication type.");
+    throw new ValidationError(
+      "Please enter the other authentication type.",
+    );
   }
 
   return {
     api_name: apiName,
-    official_api_name: officialApiName,
+
+    // Not required from Excel
+    official_api_name: "",
     company_name: companyName,
-    official_company_name: officialCompanyName,
+    official_company_name: "",
+
     description,
     api_endpoint: apiEndpoint,
+    instructions,
+
+    website_url: websiteUrl,
     documentation_url: documentationUrl,
+
     category: category as ApiCategory,
-    category_other: category === "Other" ? categoryOtherInput : "",
-    authentication_method: authentication as AuthenticationType,
-    authentication_other: authentication === "Other" ? authenticationOtherInput : "",
+    category_other:
+      category === "Other" ? categoryOtherInput : "",
+
+    authentication_method:
+      authentication as AuthenticationType,
+    authentication_other:
+      authentication === "Other"
+        ? authenticationOtherInput
+        : "",
     authentication_details: authenticationDetails,
-    instructions: "",
-    website_url: "",
-    network: "",
-    is_active: true,
-    input_formats: ["JSON"],
-    output_formats: ["JSON"],
-    business_rules: [] as string[],
-    client_types: ["REST"],
+
+    network,
+
+    is_active: optionalBoolean(input, "is_active", true),
+
+    input_formats: optionalStringArray(
+      input,
+      "input_formats",
+      ["JSON"],
+    ),
+
+    output_formats: optionalStringArray(
+      input,
+      "output_formats",
+      ["JSON"],
+    ),
+
+    business_rules: optionalStringArray(
+      input,
+      "business_rules",
+      [],
+    ),
+
+    client_types: optionalStringArray(
+      input,
+      "client_types",
+      ["REST"],
+    ),
+
     review_status: "Published" as ReviewStatus,
     source_url: documentationUrl,
+
     verified_at: null,
     verified_by: "",
     verification_notes: "",
   };
 }
+
 
 function databaseRecord(record: ApiRecord) {
   return {
