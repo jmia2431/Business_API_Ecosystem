@@ -62,6 +62,8 @@ const IMPORT_HEADERS = [
   "client_types",
 ] as const;
 
+type ImportHeader = (typeof IMPORT_HEADERS)[number];
+
 const REQUIRED_IMPORT_HEADERS = [
   "api_name",
   "description",
@@ -647,10 +649,16 @@ export default function ApiRepository({ initialRecords }: RepositoryProps) {
       for (let rowIndex = 1; rowIndex < sheetRows.length; rowIndex += 1) {
         const row = sheetRows[rowIndex];
         const rowNumber = rowIndex + 1;
-        const values = Object.fromEntries(IMPORT_HEADERS.map((header) => {
-          const column = headerColumns.get(normalizedHeader(header));
-          return [header,column === undefined ? "" : importCellText(row[column]),];})
-                                         ) as Record<ImportHeader, string>;
+        const values = Object.fromEntries(
+          IMPORT_HEADERS.map((header) => {
+            const column = headerColumns.get(normalizedHeader(header));
+            
+            return [
+              header,
+              column === undefined ? "" : importCellText(row[column]),
+            ];
+          }),
+        ) as Record<ImportHeader, string>;
         if (!IMPORT_HEADERS.some((header) => values[header])) continue;
         rawRows.push({ ...values, sourceRow: rowNumber });
         if (rawRows.length > 500) {
