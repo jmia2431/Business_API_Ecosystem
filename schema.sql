@@ -159,3 +159,19 @@ alter table public.api_audit_events enable row level security;
 revoke all
 on table public.api_audit_events
 from anon, authenticated;
+
+alter table public.api_audit_events
+drop constraint if exists api_audit_events_action_check;
+
+alter table public.api_audit_events
+add constraint api_audit_events_action_check
+check (
+  action in (
+    'upload',
+    'edit',
+    'verify',
+    'status_change',
+    'delete',
+    'restore'
+  )
+);
