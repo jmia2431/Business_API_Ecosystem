@@ -27,6 +27,26 @@ export type ApiCategory = (typeof API_CATEGORIES)[number];
 export type AuthenticationType = (typeof AUTHENTICATION_TYPES)[number];
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
+export type AuditAction = "upload" | "edit" | "verify" | "status_change" | "delete";
+
+export interface AuditEvent {
+  id: string;
+  api_id: string;
+  api_name: string;
+  company_name: string;
+  action: AuditAction;
+  actor_name: string;
+  details: string;
+  action_at: string;
+}
+
+export interface DeletedApiSummary {
+  id: string;
+  api_name: string;
+  company_name: string;
+  audit_trail: AuditEvent[];
+}
+
 export interface ApiRecord {
   id: string;
   api_name: string;
@@ -56,9 +76,11 @@ export interface ApiRecord {
   verified_at: string | null;
   verified_by: string;
   verification_notes: string;
+  audit_trail: AuditEvent[];
 }
 
 export interface ApiSubmission {
+  source_row?: number;
   api_name: string;
   official_api_name: string;
   company_name: string;
@@ -84,6 +106,26 @@ function asStringArray(value: unknown) {
     : [];
 }
 
+function asAuditEvents(value: unknown): AuditEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const event = item as Partial<AuditEvent>;
+    const action = asString(event.action) as AuditAction;
+    if (!["upload", "edit", "verify", "status_change", "delete"].includes(action)) return [];
+    return [{
+      id: asString(event.id),
+      api_id: asString(event.api_id),
+      api_name: asString(event.api_name),
+      company_name: asString(event.company_name),
+      action,
+      actor_name: asString(event.actor_name),
+      details: asString(event.details),
+      action_at: asString(event.action_at),
+    }];
+  });
+}
+
 export function normalizeAuthentication(value: unknown): AuthenticationType {
   const original = asString(value).trim();
   const normalized = original.toLowerCase();
@@ -103,14 +145,12 @@ export function normalizeAuthentication(value: unknown): AuthenticationType {
 
   return AUTHENTICATION_TYPES.includes(original as AuthenticationType)
     ? (original as AuthenticationType)
-    : "Composite";
+    : "Other";
 }
 
 export function normalizeReviewStatus(value: unknown): ReviewStatus {
   const normalized = asString(value).trim().toLowerCase();
-  return normalized === "verified" || normalized === "verified candidate"
-    ? "Verified"
-    : "Published";
+  return normalized === "verified" ? "Verified" : "Published";
 }
 
 export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
@@ -118,10 +158,24 @@ export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
   const authentication = normalizeAuthentication(rawAuthentication);
   const suppliedDetails = asString(input.authentication_details).trim();
 
-  const category = API_CATEGORIES.includes(input.category as ApiCategory)
-    ? (input.category as ApiCategory)
-    : "Communication";
-  const reviewStatus = normalizeReviewStatus(input.review_status);
+  const rawCategory = asString(input.category).trim();
+  const category = API_CATEGORIES.includes(rawCategory as ApiCategory)
+    ? (rawCategory as ApiCategory)
+    : rawCategory
+      ? "Other"
+      : "Communication";
+  const suppliedStatus = normalizeReviewStatus(input.review_status);
+  const suppliedVerifiedBy = asString(input.verified_by).trim();
+  const suppliedVerificationNotes = asString(input.verification_notes).trim();
+  const reviewStatus: ReviewStatus = suppliedStatus === "Verified"
+    && suppliedVerifiedBy
+    && suppliedVerificationNotes
+    ? "Verified"
+    : "Published";
+  const categoryOther = asString(input.category_other).trim()
+    || (category === "Other" && rawCategory !== "Other" ? rawCategory : "");
+  const authenticationOther = asString(input.authentication_other).trim()
+    || (authentication === "Other" && rawAuthentication !== "Other" ? rawAuthentication : "");
 
   return {
     id: asString(input.id) || crypto.randomUUID(),
@@ -135,9 +189,9 @@ export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
     website_url: asString(input.website_url),
     documentation_url: asString(input.documentation_url),
     category,
-    category_other: asString(input.category_other),
+    category_other: categoryOther,
     authentication_method: authentication,
-    authentication_other: asString(input.authentication_other),
+    authentication_other: authenticationOther,
     authentication_details:
       suppliedDetails || (rawAuthentication && rawAuthentication !== authentication ? rawAuthentication : ""),
     network: asString(input.network),
@@ -150,8 +204,9 @@ export function normalizeApiRecord(input: Partial<ApiRecord>): ApiRecord {
     client_types: asStringArray(input.client_types),
     review_status: reviewStatus,
     source_url: asString(input.source_url),
-    verified_at: asString(input.verified_at) || null,
-    verified_by: asString(input.verified_by),
-    verification_notes: asString(input.verification_notes),
+    verified_at: reviewStatus === "Verified" ? asString(input.verified_at) || null : null,
+    verified_by: reviewStatus === "Verified" ? suppliedVerifiedBy : "",
+    verification_notes: reviewStatus === "Verified" ? suppliedVerificationNotes : "",
+    audit_trail: asAuditEvents(input.audit_trail),
   };
 }
